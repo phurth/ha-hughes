@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hughes Power Watchdog",
+        "description": "Select a discovered Hughes Power Watchdog device or enter its Bluetooth MAC address manually.",
+        "data": {
+          "address": "Bluetooth MAC address"
+        }
+      },
+      "confirm": {
+        "title": "Configure {name}",
+        "description": "A Hughes Power Watchdog was discovered:\n\n**{name}** ({generation})\n\nDo you want to add it to Home Assistant?"
+      }
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  }
+}
