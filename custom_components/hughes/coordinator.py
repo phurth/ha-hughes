@@ -27,7 +27,7 @@ import logging
 import time
 from typing import Any
 
-from bleak import BleakClient, BleakError, BleakGATTCharacteristic, BleakScanner
+from bleak import BleakClient, BleakError, BleakGATTCharacteristic
 from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
@@ -199,11 +199,9 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
                 disconnected_callback=self._on_disconnect,
             )
         except (BleakError, TimeoutError, OSError) as exc:
-            _LOGGER.warning("BLE connect via HA router failed: %s", exc)
-            client = await self._try_direct_adapter(exc)
-            if client is None:
-                self._schedule_reconnect()
-                return
+            _LOGGER.warning("BLE connect failed: %s — will retry", exc)
+            self._schedule_reconnect()
+            return
 
         self._client = client
         self._connected = True
@@ -301,60 +299,6 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
 
         await asyncio.sleep(GEN2_INIT_SETTLE_DELAY)
         return True
-
-    async def _try_direct_adapter(self, original_exc: Exception) -> BleakClient | None:
-        """Try connecting via local HCI adapters when HA proxy has no free slots.
-
-        Mirrors the pattern used in ha-gopower: scan on each adapter to get
-        a proper BLEDevice with address-type metadata, then connect.
-        """
-        for adapter in ("hci0", "hci1", "hci2", "hci3"):
-            _LOGGER.info(
-                "Attempting direct BLE connect to %s via %s",
-                self._address,
-                adapter,
-            )
-            try:
-                ble_device = None
-                scanner = BleakScanner(adapter=adapter)
-                try:
-                    await scanner.start()
-                    await asyncio.sleep(5.0)
-                    await scanner.stop()
-                except (BleakError, OSError) as scan_exc:
-                    _LOGGER.debug("Scan on %s failed: %s", adapter, scan_exc)
-                    continue
-
-                for dev in scanner.discovered_devices:
-                    if dev.address.upper() == self._address.upper():
-                        ble_device = dev
-                        break
-
-                if ble_device is None:
-                    _LOGGER.debug("Device %s not seen on %s", self._address, adapter)
-                    continue
-
-                client = BleakClient(
-                    ble_device,
-                    disconnected_callback=self._on_disconnect,
-                    adapter=adapter,
-                )
-                await asyncio.wait_for(client.connect(), timeout=15.0)
-                if client.is_connected:
-                    _LOGGER.info(
-                        "Direct connect succeeded via %s for %s", adapter, self._address
-                    )
-                    return client
-            except (BleakError, TimeoutError, OSError, asyncio.TimeoutError) as exc:
-                _LOGGER.debug("Direct connect via %s failed: %s", adapter, exc)
-                continue
-
-        _LOGGER.warning(
-            "All direct adapter attempts failed for %s (original: %s)",
-            self._address,
-            original_exc,
-        )
-        return None
 
     async def async_disconnect(self) -> None:
         """Disconnect and clean up."""
