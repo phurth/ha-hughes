@@ -9,6 +9,7 @@
     "bluetooth_adapters"
   ],
   "documentation": "https://github.com/phurth/ha-hughes",
+  "issue_tracker": "https://github.com/phurth/ha-hughes/issues",
   "bluetooth": [
     {
       "local_name": "PMD*"
