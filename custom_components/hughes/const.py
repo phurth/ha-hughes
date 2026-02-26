@@ -1,6 +1,6 @@
 """Constants for the Hughes Power Watchdog BLE integration."""
 
-DOMAIN = "ha_hughes"
+DOMAIN = "hughes"
 
 # ---------------------------------------------------------------------------
 # Config entry data keys
