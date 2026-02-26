@@ -1,5 +1,5 @@
 {
-  "domain": "hughes",
+  "domain": "ha_hughes",
   "name": "Hughes Power Watchdog",
   "codeowners": [
     "@phurth"
@@ -26,5 +26,5 @@
     "bleak>=0.21.0",
     "bleak-retry-connector>=3.1.0"
   ],
-  "version": "1.0.1"
+  "version": "1.0.2"
 }
