@@ -2,7 +2,7 @@
   "domain": "hughes",
   "name": "Hughes Power Watchdog",
   "codeowners": [
-    "@petehurth"
+    "@phurth"
   ],
   "config_flow": true,
   "dependencies": [
