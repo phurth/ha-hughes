@@ -1,5 +1,5 @@
 {
-  "domain": "hughes",
+  "domain": "ha_hughes",
   "name": "Hughes Power Watchdog",
   "codeowners": [
     "@phurth"
