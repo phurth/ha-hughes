@@ -10,6 +10,10 @@ Additional entities for Gen2 enhanced models (E8/V8/E9/V9):
   - L1 Output Voltage
   - L1 Temperature (°F)
 
+Cumulative entities for dual-line (50amp) units:
+  - Total Power  (L1 + L2 watts)
+  - Total Energy (L1 + L2 kWh)
+
 Reference: Android HughesWatchdogDevicePlugin.kt / HughesGen2GattCallback MQTT payloads
 """
 
@@ -225,6 +229,17 @@ SENSOR_DESCRIPTIONS: tuple[HughesSensorDescription, ...] = _L1_SENSORS + _L2_SEN
 
 
 # ---------------------------------------------------------------------------
+# Cumulative (L1 + L2) sensor definitions — 50amp / dual-line units only
+# ---------------------------------------------------------------------------
+
+_CUMULATIVE_SENSORS: tuple[tuple[str, str], ...] = (
+    # (key, name)
+    ("power_total", "Total Power"),
+    ("energy_total", "Total Energy"),
+)
+
+
+# ---------------------------------------------------------------------------
 # Platform setup
 # ---------------------------------------------------------------------------
 
@@ -251,11 +266,16 @@ async def async_setup_entry(
     address = entry.data[CONF_ADDRESS]
     device_name = entry.data.get(CONF_DEVICE_NAME, "")
 
-    async_add_entities(
+    entities: list[SensorEntity] = [
         HughesSensor(coordinator, address, device_name, desc)
         for desc in SENSOR_DESCRIPTIONS
         if not desc.gen2_enhanced_only or coordinator.is_enhanced
-    )
+    ]
+    entities += [
+        HughesCumulativeSensor(coordinator, address, device_name, key, name)
+        for key, name in _CUMULATIVE_SENSORS
+    ]
+    async_add_entities(entities)
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +329,70 @@ class HughesSensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
         if line is None:
             return None
         return self.entity_description.value_fn(line)
+
+
+# ---------------------------------------------------------------------------
+# Cumulative (L1 + L2) sensor — dual-line units only
+# ---------------------------------------------------------------------------
+
+_CUMULATIVE_META: dict[str, tuple] = {
+    "power_total": (
+        UnitOfPower.WATT,
+        SensorDeviceClass.POWER,
+        SensorStateClass.MEASUREMENT,
+        "mdi:flash",
+        1,
+        lambda s: s.line1.power + s.line2.power,  # type: ignore[union-attr]
+    ),
+    "energy_total": (
+        UnitOfEnergy.KILO_WATT_HOUR,
+        SensorDeviceClass.ENERGY,
+        SensorStateClass.TOTAL_INCREASING,
+        "mdi:meter-electric",
+        3,
+        lambda s: s.line1.energy + s.line2.energy,  # type: ignore[union-attr]
+    ),
+}
+
+
+class HughesCumulativeSensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
+    """L1 + L2 cumulative sensor — only present and available on dual-line (50amp) units."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: HughesCoordinator,
+        address: str,
+        device_name: str,
+        key: str,
+        name: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._key = key
+        self._attr_name = name
+        mac = address.replace(":", "").lower()
+        self._attr_unique_id = f"{mac}_{key}"
+        self._attr_device_info = _make_device_info(address, device_name)
+        meta = _CUMULATIVE_META[key]
+        self._attr_native_unit_of_measurement = meta[0]
+        self._attr_device_class = meta[1]
+        self._attr_state_class = meta[2]
+        self._attr_icon = meta[3]
+        self._attr_suggested_display_precision = meta[4]
+        self._value_fn = meta[5]
+
+    @property
+    def available(self) -> bool:
+        """Only available when connected and dual-line data is present."""
+        if not self.coordinator.connected or self.coordinator.state is None:
+            return False
+        state = self.coordinator.state
+        return state.is_dual_line and state.line2 is not None
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.state
+        if state is None or state.line2 is None:
+            return None
+        return round(self._value_fn(state), self._attr_suggested_display_precision)
