@@ -1,16 +1,6 @@
 {
   "domain": "ha_hughes",
   "name": "Hughes Power Watchdog",
-  "codeowners": [
-    "@phurth"
-  ],
-  "config_flow": true,
-  "dependencies": [
-    "bluetooth_adapters"
-  ],
-  "documentation": "https://github.com/phurth/ha-hughes",
-  "issue_tracker": "https://github.com/phurth/ha-hughes/issues",
-  "integration_type": "device",
   "bluetooth": [
     {
       "local_name": "PMD*"
@@ -22,10 +12,20 @@
       "local_name": "WD_*"
     }
   ],
+  "codeowners": [
+    "@phurth"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "bluetooth_adapters"
+  ],
+  "documentation": "https://github.com/phurth/ha-hughes",
+  "integration_type": "device",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/phurth/ha-hughes/issues",
   "requirements": [
     "bleak>=0.21.0",
     "bleak-retry-connector>=3.1.0"
   ],
-  "version": "1.0.3"
+  "version": "1.0.4"
 }

@@ -1,8 +1,5 @@
 {
   "name": "Hughes Power Watchdog",
   "render_readme": true,
-  "homeassistant": "2024.1.0",
-  "domains": [
-    "ha_hughes"
-  ]
+  "homeassistant": "2024.1.0"
 }
