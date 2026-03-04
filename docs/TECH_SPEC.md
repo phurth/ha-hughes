@@ -68,6 +68,18 @@ Gen2 transport/protocol details:
 - enhanced Gen2 devices expose additional values (e.g., output voltage/boost/temp)
 - entity platforms mirror capability and generation-specific availability
 
+### 6.1 Cumulative (L1 + L2) sensors
+
+`HughesCumulativeSensor` provides two derived entities for dual-line (50amp) units:
+
+| Entity | Key | Value | Unit |
+|---|---|---|---|
+| Total Power | `power_total` | `line1.power + line2.power` | W |
+| Total Energy | `energy_total` | `line1.energy + line2.energy` | kWh |
+
+- both are marked unavailable when `state.is_dual_line` is `False` or `line2` is `None`
+- implemented as a separate entity class to allow reading both line fields simultaneously, rather than the single-line `value_fn` pattern used by `HughesSensor`
+
 ## 7. Command and Control Surface
 
 Gen2 write operations include:
@@ -129,6 +141,8 @@ Recent trajectory includes:
 - startup/connect robustness updates
 - migration to `ha_hughes` domain naming
 - HACS/CI/repository hardening
+- **v1.0.3:** cumulative `Total Power` and `Total Energy` sensors for dual-line (50amp) units via new `HughesCumulativeSensor` entity class
+- **v1.0.4:** HACS default store publication prep — brand `icon.png` added at `custom_components/ha_hughes/brand/`, `manifest.json` keys sorted to `domain`/`name`/alphabetical per Hassfest requirements, removed invalid `domains` key from `hacs.json`
 
 ## 12. Known Constraints
 

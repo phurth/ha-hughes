@@ -2,7 +2,11 @@
 
 Home Assistant HACS integration for **Hughes Power Watchdog** surge protectors and power management devices.
 
-Connects directly to the device over Bluetooth Low Energy — no cloud, no MQTT bridge, no internet required.
+> **Disclaimer:** This is an independent community integration and is not affiliated with, endorsed by, or supported by Hughes or any of its affiliates. Use it at your own risk.
+
+Connects directly to the device over Bluetooth Low Energy — there is no cloud or internet dependency.
+
+> Power Watchdog EPO devices can only connect to one bluetooth device at a time. If you have issues, ensure there is not another app trying to connect to the EPO.
 
 ## Features
 
