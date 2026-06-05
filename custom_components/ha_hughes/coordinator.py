@@ -41,8 +41,11 @@ from .const import (
     CONF_GENERATION,
     DOMAIN,
     GEN1,
+    GEN1_KEEPALIVE_INTERVAL,
+    GEN1_KEEPALIVE_PAYLOAD,
     GEN1_NOTIFY_CHAR_UUID,
     GEN1_SERVICE_UUID,
+    GEN1_WRITE_CHAR_UUID,
     GEN2,
     GEN2_CMD_DL_REPORT,
     GEN2_ENHANCED_MODELS,
@@ -95,7 +98,8 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         # BLE client
         self._client: BleakClient | None = None
         self._connected = False
-        self._write_char_uuid: str | None = None  # set after service discovery
+        self._write_char_uuid: str | None = None  # set after service discovery (Gen2)
+        self._gen1_write_char_uuid: str | None = None  # fff5 keepalive target (Gen1)
 
         # Protocol handlers (created fresh on each connection)
         self._gen1_assembler: Gen1FrameAssembler | None = None
@@ -111,6 +115,7 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         self._watchdog_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
         self._reconnect_failures: int = 0
+        self._gen1_keepalive_task: asyncio.Task[None] | None = None
         self._connect_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -229,6 +234,8 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
             return
 
         self._start_watchdog()
+        if self._generation == GEN1:
+            self._start_gen1_keepalive()
         self.async_update_listeners()
 
     async def _init_gen1(self, client: BleakClient) -> bool:
@@ -247,6 +254,16 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         if notify_char is None:
             _LOGGER.error("Gen1 notify characteristic %s not found", GEN1_NOTIFY_CHAR_UUID)
             return False
+
+        # Locate the write characteristic for keepalive — optional, warn if absent
+        write_char = svc.get_characteristic(GEN1_WRITE_CHAR_UUID)
+        if write_char is None:
+            _LOGGER.warning(
+                "Gen1 write characteristic %s not found — keepalive disabled",
+                GEN1_WRITE_CHAR_UUID,
+            )
+        else:
+            self._gen1_write_char_uuid = GEN1_WRITE_CHAR_UUID
 
         await asyncio.sleep(OPERATION_DELAY)
 
@@ -303,19 +320,38 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
     async def async_disconnect(self) -> None:
         """Disconnect and clean up."""
         self._stop_watchdog()
+        self._stop_gen1_keepalive()
         self._cancel_reconnect()
         if self._client:
             await self._safe_disconnect(self._client)
         self._client = None
         self._connected = False
         self._write_char_uuid = None
+        self._gen1_write_char_uuid = None
         self._gen1_assembler = None
         self._gen2_framer = None
         self._gen2_builder = None
         self.async_update_listeners()
 
     async def _safe_disconnect(self, client: BleakClient) -> None:
-        """Disconnect silently, ignoring errors."""
+        """Stop notifications then disconnect, releasing the notify slot on the device.
+
+        Calling stop_notify before disconnect prevents BlueZ from holding the notify
+        registration across reconnects, which causes ATT 0x0e (Unlikely Error) or
+        org.bluez.Error.NotPermitted on the next start_notify call.
+        """
+        if self._generation == GEN1:
+            try:
+                await client.stop_notify(GEN1_NOTIFY_CHAR_UUID)
+                _LOGGER.debug("Hughes %s: Gen1 stop_notify sent", self._address)
+            except Exception:  # noqa: BLE001
+                pass
+        elif self._write_char_uuid:
+            try:
+                await client.stop_notify(self._write_char_uuid)
+                _LOGGER.debug("Hughes %s: Gen2 stop_notify sent", self._address)
+            except Exception:  # noqa: BLE001
+                pass
         try:
             await client.disconnect()
         except Exception:  # noqa: BLE001
@@ -326,9 +362,11 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         """Handle unexpected BLE disconnection."""
         _LOGGER.warning("Hughes %s disconnected", self._address)
         self._stop_watchdog()
+        self._stop_gen1_keepalive()
         self._connected = False
         self._client = None
         self._write_char_uuid = None
+        self._gen1_write_char_uuid = None
         self._gen1_assembler = None
         self._gen2_framer = None
         self._gen2_builder = None
@@ -404,6 +442,54 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
                         if self._client:
                             await self._safe_disconnect(self._client)
                         break
+        except asyncio.CancelledError:
+            pass
+
+    # ------------------------------------------------------------------
+    # Gen1 keepalive
+    # ------------------------------------------------------------------
+
+    def _start_gen1_keepalive(self) -> None:
+        """Start periodic keepalive writes to prevent PMD connection drop."""
+        self._stop_gen1_keepalive()
+        if self._gen1_write_char_uuid is None:
+            _LOGGER.debug(
+                "Hughes %s: Gen1 keepalive not started — write characteristic unavailable",
+                self._address,
+            )
+            return
+        _LOGGER.debug(
+            "Hughes %s: starting Gen1 keepalive (interval=%.0fs)",
+            self._address,
+            GEN1_KEEPALIVE_INTERVAL,
+        )
+        self._gen1_keepalive_task = self._entry.async_create_background_task(
+            self.hass, self._gen1_keepalive_loop(), "hughes_gen1_keepalive"
+        )
+
+    def _stop_gen1_keepalive(self) -> None:
+        """Cancel the keepalive task if running."""
+        if self._gen1_keepalive_task and not self._gen1_keepalive_task.done():
+            self._gen1_keepalive_task.cancel()
+        self._gen1_keepalive_task = None
+
+    async def _gen1_keepalive_loop(self) -> None:
+        """Periodically write to fff5 to keep the PMD connection alive."""
+        try:
+            while self._connected and self._client is not None:
+                await asyncio.sleep(GEN1_KEEPALIVE_INTERVAL)
+                if not self._connected or self._client is None:
+                    break
+                try:
+                    await self._client.write_gatt_char(
+                        GEN1_WRITE_CHAR_UUID, GEN1_KEEPALIVE_PAYLOAD, response=False
+                    )
+                    _LOGGER.debug("Hughes %s: Gen1 keepalive sent", self._address)
+                except (BleakError, TimeoutError, OSError) as exc:
+                    _LOGGER.warning(
+                        "Hughes %s: Gen1 keepalive write failed: %s", self._address, exc
+                    )
+                    # Non-fatal — watchdog will handle stale data if connection is truly lost
         except asyncio.CancelledError:
             pass
 
