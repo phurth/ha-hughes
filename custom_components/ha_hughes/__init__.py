@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_GENERATION, DOMAIN, GEN2
@@ -41,8 +42,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
 
-    # Connect in the background; entities show unavailable until first data arrives
+    # Connect in the background; entities show unavailable until first data arrives.
+    # A MAC-derived startup delay staggers simultaneous BLE integration startups
+    # after an HA restart, reducing adapter contention when multiple BLE integrations
+    # (EasyTouch x3, OneControl, Hughes) all attempt to connect at the same time.
+    # The last MAC octet gives a deterministic 0–12.75s spread — same device always
+    # gets the same delay, no user configuration needed.
     async def _bg_connect() -> None:
+        address = entry.data[CONF_ADDRESS]
+        mac_offset = int(address.replace(":", ""), 16) & 0xFF
+        startup_delay = mac_offset / 20.0  # 0–12.75s based on last MAC octet
+        _LOGGER.debug(
+            "Hughes %s: startup delay %.1fs (MAC-derived)",
+            address,
+            startup_delay,
+        )
+        import asyncio
+        await asyncio.sleep(startup_delay)
         try:
             await coordinator.async_connect()
         except Exception:  # noqa: BLE001

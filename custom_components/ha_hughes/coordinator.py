@@ -362,6 +362,8 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         self._gen1_assembler = None
         self._gen2_framer = None
         self._gen2_builder = None
+        self._first_data_received = False
+        self._is_dual_line = False
         self.async_update_listeners()
 
     async def _safe_disconnect(self, client: BleakClient) -> None:
@@ -400,6 +402,10 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         self._gen1_assembler = None
         self._gen2_framer = None
         self._gen2_builder = None
+        # Reset per-connection state so first-data and dual-line logs fire again
+        # on the next reconnect, confirming both lines are receiving data.
+        self._first_data_received = False
+        self._is_dual_line = False
         self.async_update_listeners()
         self._schedule_reconnect()
 
