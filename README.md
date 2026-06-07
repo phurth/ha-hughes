@@ -15,7 +15,7 @@ Connects directly to the device over Bluetooth Low Energy — there is no cloud 
 - **Dual-line (50A) support**: L1 and L2 entities created automatically when dual-line operation is detected
 - **Gen1 and Gen2 device support**: generation auto-detected from device name
 - **Gen2 control commands**: relay on/off, backlight level, neutral detection, energy reset, time sync
-- **Diagnostics**: connection health binary sensor, raw frame dump, one-click diagnostics download
+- **Diagnostics**: connection health binary sensor, BLE signal strength, raw frame dump, one-click diagnostics download
 
 ## Entities
 
@@ -39,6 +39,9 @@ Connects directly to the device over Bluetooth Low Energy — there is no cloud 
 | L2 Error Code | Sensor (diag) | — | — | Dual-line only |
 | Connected | Binary Sensor (diag) | connectivity | — | |
 | Data Healthy | Binary Sensor (diag) | problem | — | |
+| Signal Strength | Sensor (diag) | signal_strength | dBm | Updated on reconnect only — see note |
+
+> **Signal Strength (RSSI) note:** The PMD stops advertising once a GATT connection is established — standard BLE behavior. The Signal Strength sensor therefore captures the RSSI seen during the most recent connection attempt rather than updating continuously during a session. It refreshes on every reconnect, making it useful for comparing signal quality when moving to a new location or diagnosing range-related instability. As a guide: -55 dBm or better is excellent; -75 dBm is marginal; -80 dBm or below may contribute to connection instability.
 
 ### Gen2 only
 
