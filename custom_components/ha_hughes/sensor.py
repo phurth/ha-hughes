@@ -14,6 +14,9 @@ Cumulative entities for dual-line (50amp) units:
   - Total Power  (L1 + L2 watts)
   - Total Energy (L1 + L2 kWh)
 
+Diagnostic entities for all devices:
+  - Signal Strength (RSSI dBm) — from BLE advertisement scanner
+
 Reference: Android HughesWatchdogDevicePlugin.kt / HughesGen2GattCallback MQTT payloads
 """
 
@@ -275,11 +278,12 @@ async def async_setup_entry(
         HughesCumulativeSensor(coordinator, address, device_name, key, name)
         for key, name in _CUMULATIVE_SENSORS
     ]
+    entities += [HughesRSSISensor(coordinator, address, device_name)]
     async_add_entities(entities)
 
 
 # ---------------------------------------------------------------------------
-# Entity class
+# Entity classes
 # ---------------------------------------------------------------------------
 
 class HughesSensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
@@ -396,3 +400,46 @@ class HughesCumulativeSensor(CoordinatorEntity[HughesCoordinator], SensorEntity)
         if state is None or state.line2 is None:
             return None
         return round(self._value_fn(state), self._attr_suggested_display_precision)
+
+
+# ---------------------------------------------------------------------------
+# RSSI diagnostic sensor
+# ---------------------------------------------------------------------------
+
+class HughesRSSISensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
+    """Diagnostic sensor reporting BLE signal strength from advertisements.
+
+    Reads RSSI from the HA Bluetooth scanner's most recent advertisement for
+    this device. Updates whenever the coordinator fires (i.e. on each telemetry
+    frame), reflecting the last seen advertisement RSSI at that moment.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Signal Strength"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:signal"
+    _attr_suggested_display_precision = 0
+
+    def __init__(
+        self,
+        coordinator: HughesCoordinator,
+        address: str,
+        device_name: str,
+    ) -> None:
+        super().__init__(coordinator)
+        mac = address.replace(":", "").lower()
+        self._attr_unique_id = f"{mac}_rssi"
+        self._attr_device_info = _make_device_info(address, device_name)
+
+    @property
+    def available(self) -> bool:
+        """Available when connected."""
+        return self.coordinator.connected
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the current RSSI from BLE advertisements."""
+        return self.coordinator.rssi

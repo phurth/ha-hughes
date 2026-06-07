@@ -54,7 +54,6 @@ from .const import (
     GEN1,
     GEN1_NOTIFY_CHAR_UUID,
     GEN1_SERVICE_UUID,
-    GEN1_WRITE_CHAR_UUID,
     GEN2,
     GEN2_CMD_DL_REPORT,
     GEN2_ENHANCED_MODELS,
@@ -128,6 +127,14 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
+
+    @property
+    def rssi(self) -> int | None:
+        """Return the most recent RSSI from BLE advertisements."""
+        service_info = bluetooth.async_last_service_info(
+            self.hass, self._address, connectable=True
+        )
+        return service_info.rssi if service_info else None
 
     @property
     def connected(self) -> bool:
@@ -257,15 +264,10 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
             _LOGGER.error("Gen1 notify characteristic %s not found", GEN1_NOTIFY_CHAR_UUID)
             return False
 
-        # Locate FFF5 write/notify characteristic — used for commands and notify channel.
-        # The Android app enables notifications on both FFE2 and FFF5 in onServicesDiscovered.
-        # FFF5 notify is passive (no writes) — just signals readiness to the device.
-        write_char = svc.get_characteristic(GEN1_WRITE_CHAR_UUID)
-
         # Wait for BlueZ to fully release any stale notify registration from a
         # prior connection. Without this delay ATT 0x0e fires on start_notify.
-        # Increased from 0.2s (SERVICE_DISCOVERY_DELAY) — device needs more time
-        # to complete GATT service table initialization under load.
+        # Increased from 0.2s — device needs more time to complete GATT service
+        # table initialization under load.
         await asyncio.sleep(2.0)
 
         self._gen1_assembler = Gen1FrameAssembler()
@@ -294,18 +296,11 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
                     )
                     raise
 
-        # Enable notifications on FFF5 — mirrors the Android app's onServicesDiscovered
-        # sequence which enables notify ON for both FFE2 and FFF5. This is passive
-        # (no data written) and signals to the device that the client is ready to
-        # receive on the command response channel.
-        if write_char is not None:
-            try:
-                await client.start_notify(write_char, self._on_gen1_fff5_notification)
-                _LOGGER.info("Gen1 FFF5 notifications enabled on %s", GEN1_WRITE_CHAR_UUID)
-            except BleakError as exc:
-                _LOGGER.debug(
-                    "Hughes %s: FFF5 start_notify failed (non-fatal): %s", self._address, exc
-                )
+        # Enable notifications on FFE2 — the telemetry stream.
+        # FFF5 notify is intentionally omitted: enabling it causes BlueZ to hold
+        # two notify slots per connection, and when the device drops unexpectedly
+        # stop_notify on FFF5 may not complete, leaving a stale registration that
+        # causes NotPermitted on the next start_notify attempt.
 
         return True
 
@@ -374,12 +369,11 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         org.bluez.Error.NotPermitted on the next start_notify call.
         """
         if self._generation == GEN1:
-            for char_uuid in (GEN1_NOTIFY_CHAR_UUID, GEN1_WRITE_CHAR_UUID):
-                try:
-                    await client.stop_notify(char_uuid)
-                    _LOGGER.debug("Hughes %s: stop_notify sent for %s", self._address, char_uuid)
-                except Exception:  # noqa: BLE001
-                    pass
+            try:
+                await client.stop_notify(GEN1_NOTIFY_CHAR_UUID)
+                _LOGGER.debug("Hughes %s: Gen1 stop_notify sent", self._address)
+            except Exception:  # noqa: BLE001
+                pass
         elif self._write_char_uuid:
             try:
                 await client.stop_notify(self._write_char_uuid)
@@ -502,19 +496,6 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         line_data, is_line2 = result
         self._last_data_time = time.monotonic()
         self.hass.async_create_task(self._update_gen1_state(line_data, is_line2))
-
-    def _on_gen1_fff5_notification(
-        self, characteristic: BleakGATTCharacteristic, data: bytearray
-    ) -> None:
-        """Handle a notification on FFF5 (command response channel).
-
-        The device may send responses here. Currently logged at debug level only.
-        """
-        try:
-            text = bytes(data).decode("ascii", errors="replace").strip()
-            _LOGGER.debug("Hughes %s: FFF5 notification: %s", self._address, text)
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug("Hughes %s: FFF5 raw notification: %s", self._address, data.hex())
 
     async def _update_gen1_state(self, line_data: HughesLineData, is_line2: bool) -> None:
         """Merge parsed Gen1 frame into coordinator state and notify entities."""
