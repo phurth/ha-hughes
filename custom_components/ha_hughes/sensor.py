@@ -42,7 +42,7 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -305,6 +305,34 @@ class HughesSensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
         mac = address.replace(":", "").lower()
         self._attr_unique_id = f"{mac}_{description.key}"
         self._attr_device_info = _make_device_info(address, device_name)
+        self._last_energy: float | None = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Skip state writes for energy sensors when the value has not changed.
+
+        The coordinator fires on every BLE notification (~2/s for dual-line Gen1).
+        TOTAL_INCREASING sensors log "Detected new cycle" for each state entry
+        below the historical max, so suppressing duplicate energy writes prevents
+        log spam after a power outage until the counter climbs back to its prior
+        value.
+        """
+        if self.entity_description.device_class == SensorDeviceClass.ENERGY:
+            if not self.available:
+                self._last_energy = None  # reset so next available write always fires
+            else:
+                state = self.coordinator.state
+                new_val: float | None = None
+                if state is not None:
+                    line = self._get_line_data(state)
+                    if line is not None:
+                        v = self.entity_description.value_fn(line)
+                        if isinstance(v, (int, float)):
+                            new_val = float(v)
+                if new_val is not None and new_val == self._last_energy:
+                    return
+                self._last_energy = new_val
+        self.async_write_ha_state()
 
     def _get_line_data(self, state: HughesState) -> HughesLineData | None:
         """Return the appropriate line data for this entity."""
@@ -385,6 +413,21 @@ class HughesCumulativeSensor(CoordinatorEntity[HughesCoordinator], SensorEntity)
         self._attr_icon = meta[3]
         self._attr_suggested_display_precision = meta[4]
         self._value_fn = meta[5]
+        self._last_energy: float | None = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        if self._key == "energy_total":
+            if not self.available:
+                self._last_energy = None
+            else:
+                state = self.coordinator.state
+                if state is not None and state.line2 is not None:
+                    new_val = round(self._value_fn(state), self._attr_suggested_display_precision)
+                    if new_val == self._last_energy:
+                        return
+                    self._last_energy = new_val
+        self.async_write_ha_state()
 
     @property
     def available(self) -> bool:

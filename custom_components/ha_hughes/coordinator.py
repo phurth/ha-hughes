@@ -130,10 +130,19 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
 
     @property
     def rssi(self) -> int | None:
-        """Return the most recent RSSI from BLE advertisements."""
+        """Return the most recent RSSI from BLE advertisements.
+
+        Tries connectable advertisements first, then falls back to passive
+        scan results. The device stops advertising once connected so BlueZ
+        may only have a passive scan entry available during an active session.
+        """
         service_info = bluetooth.async_last_service_info(
             self.hass, self._address, connectable=True
         )
+        if service_info is None:
+            service_info = bluetooth.async_last_service_info(
+                self.hass, self._address, connectable=False
+            )
         return service_info.rssi if service_info else None
 
     @property
