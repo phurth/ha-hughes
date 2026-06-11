@@ -14,6 +14,9 @@ Cumulative entities for dual-line (50amp) units:
   - Total Power  (L1 + L2 watts)
   - Total Energy (L1 + L2 kWh)
 
+Diagnostic entities for all devices:
+  - Signal Strength (RSSI dBm) — from BLE advertisement scanner
+
 Reference: Android HughesWatchdogDevicePlugin.kt / HughesGen2GattCallback MQTT payloads
 """
 
@@ -39,7 +42,7 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -275,11 +278,12 @@ async def async_setup_entry(
         HughesCumulativeSensor(coordinator, address, device_name, key, name)
         for key, name in _CUMULATIVE_SENSORS
     ]
+    entities += [HughesRSSISensor(coordinator, address, device_name)]
     async_add_entities(entities)
 
 
 # ---------------------------------------------------------------------------
-# Entity class
+# Entity classes
 # ---------------------------------------------------------------------------
 
 class HughesSensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
@@ -301,6 +305,34 @@ class HughesSensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
         mac = address.replace(":", "").lower()
         self._attr_unique_id = f"{mac}_{description.key}"
         self._attr_device_info = _make_device_info(address, device_name)
+        self._last_energy: float | None = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Skip state writes for energy sensors when the value has not changed.
+
+        The coordinator fires on every BLE notification (~2/s for dual-line Gen1).
+        TOTAL_INCREASING sensors log "Detected new cycle" for each state entry
+        below the historical max, so suppressing duplicate energy writes prevents
+        log spam after a power outage until the counter climbs back to its prior
+        value.
+        """
+        if self.entity_description.device_class == SensorDeviceClass.ENERGY:
+            if not self.available:
+                self._last_energy = None  # reset so next available write always fires
+            else:
+                state = self.coordinator.state
+                new_val: float | None = None
+                if state is not None:
+                    line = self._get_line_data(state)
+                    if line is not None:
+                        v = self.entity_description.value_fn(line)
+                        if isinstance(v, (int, float)):
+                            new_val = float(v)
+                if new_val is not None and new_val == self._last_energy:
+                    return
+                self._last_energy = new_val
+        self.async_write_ha_state()
 
     def _get_line_data(self, state: HughesState) -> HughesLineData | None:
         """Return the appropriate line data for this entity."""
@@ -381,6 +413,21 @@ class HughesCumulativeSensor(CoordinatorEntity[HughesCoordinator], SensorEntity)
         self._attr_icon = meta[3]
         self._attr_suggested_display_precision = meta[4]
         self._value_fn = meta[5]
+        self._last_energy: float | None = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        if self._key == "energy_total":
+            if not self.available:
+                self._last_energy = None
+            else:
+                state = self.coordinator.state
+                if state is not None and state.line2 is not None:
+                    new_val = round(self._value_fn(state), self._attr_suggested_display_precision)
+                    if new_val == self._last_energy:
+                        return
+                    self._last_energy = new_val
+        self.async_write_ha_state()
 
     @property
     def available(self) -> bool:
@@ -396,3 +443,46 @@ class HughesCumulativeSensor(CoordinatorEntity[HughesCoordinator], SensorEntity)
         if state is None or state.line2 is None:
             return None
         return round(self._value_fn(state), self._attr_suggested_display_precision)
+
+
+# ---------------------------------------------------------------------------
+# RSSI diagnostic sensor
+# ---------------------------------------------------------------------------
+
+class HughesRSSISensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
+    """Diagnostic sensor reporting BLE signal strength from advertisements.
+
+    Reads RSSI from the HA Bluetooth scanner's most recent advertisement for
+    this device. Updates whenever the coordinator fires (i.e. on each telemetry
+    frame), reflecting the last seen advertisement RSSI at that moment.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Signal Strength"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:signal"
+    _attr_suggested_display_precision = 0
+
+    def __init__(
+        self,
+        coordinator: HughesCoordinator,
+        address: str,
+        device_name: str,
+    ) -> None:
+        super().__init__(coordinator)
+        mac = address.replace(":", "").lower()
+        self._attr_unique_id = f"{mac}_rssi"
+        self._attr_device_info = _make_device_info(address, device_name)
+
+    @property
+    def available(self) -> bool:
+        """Available when connected."""
+        return self.coordinator.connected
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the current RSSI from BLE advertisements."""
+        return self.coordinator.rssi
