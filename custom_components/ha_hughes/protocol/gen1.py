@@ -35,10 +35,42 @@ from ..models import HughesLineData
 
 _LOGGER = logging.getLogger(__name__)
 
+# Physical-plausibility bounds for a North-American RV shore-power circuit.
+# The Gen1 stream has no checksum: a dropped 20-byte chunk can cause the
+# assembler to pair the wrong two chunks, and a misaligned 40-byte frame can
+# still pass the 3-byte header check while yielding wildly out-of-range int32
+# values. Left unfiltered, a single garbage energy reading is recorded as a huge
+# positive delta into long-term statistics (issue #3 — multi-billion kWh sums,
+# multi-million-dollar Energy dashboard cost). Reject the whole frame if any
+# field is implausible; dropping one ~2/s sample is harmless.
+_MAX_VOLTAGE = 300.0          # V   — nominal 120/240 + headroom
+_MAX_CURRENT = 250.0          # A   — 50A unit + generous margin for misreads
+_MAX_POWER = 60_000.0         # W   — 240 V x ~100 A + headroom
+_MAX_ENERGY = 10_000_000.0    # kWh — lifetime cumulative (~a century at full load)
+_MAX_FREQUENCY = 100.0        # Hz  — nominal 60 + headroom
+
 
 def _parse_int32_be(data: bytes, offset: int) -> int:
     """Parse a big-endian signed int32 from data at offset."""
     return struct.unpack_from(">i", data, offset)[0]
+
+
+def _values_plausible(
+    voltage: float, current: float, power: float, energy: float, frequency: float
+) -> bool:
+    """Return True if all parsed quantities fall within physical bounds.
+
+    All quantities are non-negative magnitudes (shore-power draw), so a negative
+    value indicates a misassembled/corrupt frame, as does any value above its
+    ceiling.
+    """
+    return (
+        0.0 <= voltage <= _MAX_VOLTAGE
+        and 0.0 <= current <= _MAX_CURRENT
+        and 0.0 <= power <= _MAX_POWER
+        and 0.0 <= energy <= _MAX_ENERGY
+        and 0.0 <= frequency <= _MAX_FREQUENCY
+    )
 
 
 def parse_gen1_frame(frame: bytes) -> tuple[HughesLineData, bool] | None:
@@ -74,6 +106,22 @@ def parse_gen1_frame(frame: bytes) -> tuple[HughesLineData, bool] | None:
 
     except (struct.error, IndexError) as exc:
         _LOGGER.warning("Gen1 frame parse error: %s", exc)
+        return None
+
+    # Reject misassembled frames whose values are physically impossible. This
+    # keeps garbage out of the live state and, critically, out of long-term
+    # statistics (see _values_plausible / issue #3).
+    if not _values_plausible(voltage, current, power, energy, frequency):
+        _LOGGER.debug(
+            "Gen1: implausible frame discarded "
+            "(V=%.4f A=%.4f W=%.4f kWh=%.4f Hz=%.4f) raw=%s",
+            voltage,
+            current,
+            power,
+            energy,
+            frequency,
+            frame.hex(),
+        )
         return None
 
     return (

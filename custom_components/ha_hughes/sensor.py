@@ -22,6 +22,7 @@ Reference: Android HughesWatchdogDevicePlugin.kt / HughesGen2GattCallback MQTT p
 
 from __future__ import annotations
 
+import datetime
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -50,6 +51,16 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import CONF_DEVICE_NAME, DOMAIN
 from .coordinator import HughesCoordinator
 from .models import HughesLineData, HughesState
+
+# Energy sensors report a lifetime-cumulative reading that never resets to a
+# known point. Pairing SensorStateClass.TOTAL with a fixed last_reset (rather
+# than TOTAL_INCREASING) tells the statistics engine to accumulate signed deltas
+# between consecutive readings and to NOT treat a value decrease as a meter
+# reset. This is the canonical pattern for an always-accumulating meter and is
+# what fixes issue #3: under TOTAL_INCREASING a transient glitch reading was
+# added to the statistics sum as a huge positive delta (and the recovery drop
+# was misread as a reset), corrupting long-term statistics into the billions.
+_ENERGY_LAST_RESET = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -101,7 +112,7 @@ _L1_SENSORS: tuple[HughesSensorDescription, ...] = (
         name="L1 Energy",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:meter-electric",
         suggested_display_precision=3,
         value_fn=lambda d: d.energy,
@@ -193,7 +204,7 @@ _L2_SENSORS: tuple[HughesSensorDescription, ...] = (
         name="L2 Energy",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:meter-electric",
         suggested_display_precision=3,
         is_l2=True,
@@ -307,15 +318,21 @@ class HughesSensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
         self._attr_device_info = _make_device_info(address, device_name)
         self._last_energy: float | None = None
 
+    @property
+    def last_reset(self) -> datetime.datetime | None:
+        """Fixed reset epoch for ENERGY (TOTAL) sensors; None for everything else."""
+        if self.entity_description.device_class == SensorDeviceClass.ENERGY:
+            return _ENERGY_LAST_RESET
+        return None
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Skip state writes for energy sensors when the value has not changed.
 
         The coordinator fires on every BLE notification (~2/s for dual-line Gen1).
-        TOTAL_INCREASING sensors log "Detected new cycle" for each state entry
-        below the historical max, so suppressing duplicate energy writes prevents
-        log spam after a power outage until the counter climbs back to its prior
-        value.
+        Suppressing duplicate energy writes keeps recorder churn down without
+        affecting statistics: a genuine change (including a decrease, which TOTAL
+        records as a signed delta) still writes through.
         """
         if self.entity_description.device_class == SensorDeviceClass.ENERGY:
             if not self.available:
@@ -379,7 +396,7 @@ _CUMULATIVE_META: dict[str, tuple] = {
     "energy_total": (
         UnitOfEnergy.KILO_WATT_HOUR,
         SensorDeviceClass.ENERGY,
-        SensorStateClass.TOTAL_INCREASING,
+        SensorStateClass.TOTAL,
         "mdi:meter-electric",
         3,
         lambda s: s.line1.energy + s.line2.energy,  # type: ignore[union-attr]
@@ -414,6 +431,13 @@ class HughesCumulativeSensor(CoordinatorEntity[HughesCoordinator], SensorEntity)
         self._attr_suggested_display_precision = meta[4]
         self._value_fn = meta[5]
         self._last_energy: float | None = None
+
+    @property
+    def last_reset(self) -> datetime.datetime | None:
+        """Fixed reset epoch for the ENERGY (TOTAL) cumulative sensor."""
+        if self._attr_device_class == SensorDeviceClass.ENERGY:
+            return _ENERGY_LAST_RESET
+        return None
 
     @callback
     def _handle_coordinator_update(self) -> None:
