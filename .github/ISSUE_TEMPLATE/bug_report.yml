@@ -76,7 +76,7 @@ body:
         ```yaml
         logger:
           logs:
-            custom_components.hughes: debug
+            custom_components.ha_hughes: debug
         ```
         Then paste the relevant log lines here.
       render: text
