@@ -133,3 +133,31 @@ async def test_loads_with_an_older_library_copy(hass, monkeypatch, caplog) -> No
         monkeypatch.undo()
         importlib.reload(pinning)
     assert pinning.PINNING_READY is True
+
+
+def test_picker_lists_known_scanners_when_0_2_0_is_loaded(monkeypatch) -> None:
+    """0.2.0's adapter_options has no scanners=; the picker must still list them."""
+    import custom_components.ha_hughes.pinning as pinning  # noqa: PLC0415
+
+    def old_adapter_options(scanner_devices, current=None):  # 0.2.0 signature
+        options = {"automatic": "Automatic (Home Assistant chooses)"}
+        for d in scanner_devices:
+            options[d.scanner.source] = f"{d.scanner.name}, {d.advertisement.rssi} dBm"
+        if current and current != "automatic" and current not in options:
+            options[current] = f"{current} (not hearing this device right now)"
+        return options
+
+    monkeypatch.setattr(pinning, "_adapter_options", old_adapter_options)
+    scanners = [
+        SimpleNamespace(source=PROXY, name="proxy", connectable=True),
+        SimpleNamespace(source=HCI0, name="hci0", connectable=True),
+        SimpleNamespace(source="44:44:44:44:44:44", name="passive", connectable=False),
+    ]
+    # Connected thermostat: nothing hears it; the stored choice is the proxy.
+    options = pinning.adapter_options([], PROXY, scanners=scanners)
+    assert list(options) == ["automatic", HCI0, PROXY]
+    assert options[PROXY] == "proxy"
+    # Heard scanners stay first, with their signal.
+    options = pinning.adapter_options([_heard(PROXY, "proxy", -60)], None, scanners=scanners)
+    assert list(options) == ["automatic", PROXY, HCI0]
+    assert options[PROXY] == "proxy, -60 dBm"

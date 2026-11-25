@@ -16,6 +16,40 @@ from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
+_NOT_HEARING_0_2_0 = "(not hearing this device right now)"
+
+
+def _norm(source: Any) -> str:
+    return str(source).upper().replace(":", "")
+
+
+def _with_known_scanners(
+    options: dict[str, str], scanners: list[Any], current: str | None
+) -> dict[str, str]:
+    """Add connectable scanners that 0.2.0's *options* lacks, by name, after the heard ones."""
+    stored_missing = False
+    if current and current != "automatic" and options.get(current, "").endswith(_NOT_HEARING_0_2_0):
+        options.pop(current)
+        stored_missing = True
+    listed = {_norm(value) for value in options}
+    extra: list[tuple[str, str]] = []
+    for scanner in scanners:
+        source = getattr(scanner, "source", None)
+        if (
+            not isinstance(source, str)
+            or getattr(scanner, "connectable", True) is False
+            or _norm(source) in listed
+        ):
+            continue
+        listed.add(_norm(source))
+        extra.append((getattr(scanner, "name", None) or source, source))
+    for name, source in sorted(extra):
+        options[source] = name
+    if stored_missing and _norm(current) not in listed:
+        options[current] = f"{current} (not available right now)"
+    return options
+
+
 try:
     from ha_ble_pinning import (
         AUTOMATIC,
@@ -29,11 +63,21 @@ try:
     def adapter_options(
         scanner_devices: Iterable[Any], current: str | None = None, scanners: Iterable[Any] = ()
     ) -> dict[str, str]:
-        """Picker choices; 0.2.0 (loaded earlier in this run) lacks ``scanners``."""
+        """Picker choices, including scanners that don't hear the device right now.
+
+        ha-ble-pinning 0.2.0 (possibly loaded earlier in this start) has no
+        ``scanners`` argument; add the known scanners here instead, or a
+        connected device (which stops advertising) would offer only Automatic.
+        """
+        scanner_devices = list(scanner_devices)
+        scanners = list(scanners)
         try:
             return _adapter_options(scanner_devices, current, scanners=scanners)
         except TypeError:
-            return _adapter_options(scanner_devices, current)
+            return _with_known_scanners(
+                _adapter_options(scanner_devices, current), scanners, current
+            )
+
 except ImportError:  # An older ha-ble-pinning is loaded; a restart fixes it.
     PINNING_READY = False
     AUTOMATIC = "automatic"
