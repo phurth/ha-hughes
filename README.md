@@ -40,6 +40,7 @@ Connects directly to the device over Bluetooth Low Energy — there is no cloud 
 | Connected | Binary Sensor (diag) | connectivity | — | |
 | Data Healthy | Binary Sensor (diag) | problem | — | |
 | Signal Strength | Sensor (diag) | signal_strength | dBm | Updated on reconnect only — see note |
+| Bluetooth Path | Sensor (diag) | bluetooth_path | — | The adapter or proxy the connection uses; attributes `source`, `adapter_choice`, `fallback` |
 
 > **Signal Strength (RSSI) note:** The PMD stops advertising once a GATT connection is established — standard BLE behavior. The Signal Strength sensor therefore captures the RSSI seen during the most recent connection attempt rather than updating continuously during a session. It refreshes on every reconnect, making it useful for comparing signal quality when moving to a new location or diagnosing range-related instability. As a guide: -55 dBm or better is excellent; -75 dBm is marginal; -80 dBm or below may contribute to connection instability.
 
@@ -63,7 +64,7 @@ Connects directly to the device over Bluetooth Low Energy — there is no cloud 
 
 ## Requirements
 
-- Home Assistant 2024.1+ with Bluetooth integration
+- Home Assistant 2025.2+ with Bluetooth integration
 - Bluetooth adapter on the HA host (or ESPHome BT proxy)
 - Hughes Power Watchdog device within BLE range
 
@@ -73,6 +74,17 @@ Connects directly to the device over Bluetooth Low Energy — there is no cloud 
 2. Install "Hughes Power Watchdog"
 3. Restart Home Assistant
 4. The device should auto-discover — or add manually via Settings → Devices & Services → Add Integration → Hughes Power Watchdog and enter the Bluetooth MAC address
+
+## Bluetooth adapter (options)
+
+The Watchdog streams telemetry over a connection that stays open, so it holds a connection slot on whichever adapter or proxy it uses. Home Assistant picks that by signal strength and its own slot count. With several devices that hold connections (thermostats, an RV gateway, battery monitors), it can put more on one adapter than that adapter can actually carry. Connections then drop or never come up.
+
+Settings → Devices & services → Hughes Power Watchdog → **Configure** lets you choose:
+
+- **Connect through:** *Automatic* (the default: Home Assistant decides) or one specific adapter or proxy. Adapters and proxies that hear the Watchdog right now are listed first, strongest first, then the others.
+- **Use another adapter if this one is unavailable:** on by default. Another adapter is only used when the chosen one hasn't heard the Watchdog recently or has no free slot.
+
+The **Bluetooth Path** sensor shows which one is in use. The choice is made with [ha-ble-pinning](https://github.com/phurth/ha-ble-pinning).
 
 ## Startup Delay
 
@@ -135,7 +147,7 @@ Use **Download diagnostics** from the integration page for a full runtime state 
 ### BLE connection instability
 
 - Ensure no other app (e.g. the Hughes mobile app) has the device paired or connected — Power Watchdog EPO devices support only one BLE connection at a time.
-- If running multiple BLE integrations (EasyTouch, OneControl, etc.) on a single adapter, consider adding an [ESPHome Bluetooth proxy](https://esphome.github.io/bluetooth-proxies/) near the Power Watchdog to give it a dedicated connection path.
+- If running multiple BLE integrations (EasyTouch, OneControl, etc.) on a single adapter, consider adding an [ESPHome Bluetooth proxy](https://esphome.github.io/bluetooth-proxies/) near the Power Watchdog and choosing it under **Configure → Connect through** (see [Bluetooth adapter](#bluetooth-adapter-options)), so the Watchdog has a dedicated connection path.
 - Check that the device is within reliable BLE range. RSSI below -80 dBm indicates marginal range and may cause intermittent drops.
 
 ### Device drops connection under heavy load

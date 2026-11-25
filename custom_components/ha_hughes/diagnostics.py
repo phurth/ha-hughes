@@ -28,6 +28,11 @@ async def async_get_config_entry_diagnostics(
     # Connection / health state
     connection: dict[str, Any] = {
         "connected": coordinator.connected,
+        "bluetooth": {
+            "adapter_choice": coordinator.adapter_choice,
+            "fallback": coordinator.adapter_fallback,
+            "path": coordinator.bluetooth_path,
+        },
         "data_healthy": coordinator.data_healthy,
         "last_data_age_seconds": (
             round(coordinator.last_data_age, 1)

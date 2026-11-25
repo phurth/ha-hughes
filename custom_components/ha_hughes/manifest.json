@@ -25,7 +25,8 @@
   "issue_tracker": "https://github.com/phurth/ha-hughes/issues",
   "requirements": [
     "bleak>=0.21.0",
-    "bleak-retry-connector>=3.1.0"
+    "bleak-retry-connector>=3.1.0",
+    "ha-ble-pinning>=0.2.1,<1"
   ],
-  "version": "1.0.6"
+  "version": "1.1.0"
 }

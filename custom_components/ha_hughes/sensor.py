@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Callable
+from typing import Any
 from dataclasses import dataclass
 
 from homeassistant.components.sensor import (
@@ -289,7 +290,10 @@ async def async_setup_entry(
         HughesCumulativeSensor(coordinator, address, device_name, key, name)
         for key, name in _CUMULATIVE_SENSORS
     ]
-    entities += [HughesRSSISensor(coordinator, address, device_name)]
+    entities += [
+        HughesRSSISensor(coordinator, address, device_name),
+        HughesBluetoothPathSensor(coordinator, address, device_name),
+    ]
     async_add_entities(entities)
 
 
@@ -510,3 +514,44 @@ class HughesRSSISensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
     def native_value(self) -> int | None:
         """Return the current RSSI from BLE advertisements."""
         return self.coordinator.rssi
+
+
+class HughesBluetoothPathSensor(CoordinatorEntity[HughesCoordinator], SensorEntity):
+    """Diagnostic sensor: the Bluetooth adapter or proxy the connection uses.
+
+    Set in the integration's options (Configure → Connect through); Automatic
+    lets Home Assistant choose.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Bluetooth Path"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:bluetooth-connect"
+
+    def __init__(
+        self,
+        coordinator: HughesCoordinator,
+        address: str,
+        device_name: str,
+    ) -> None:
+        super().__init__(coordinator)
+        mac = address.replace(":", "").lower()
+        self._attr_unique_id = f"{mac}_bluetooth_path"
+        self._attr_device_info = _make_device_info(address, device_name)
+
+    @property
+    def available(self) -> bool:
+        """Available when connected."""
+        return self.coordinator.connected
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.bluetooth_path
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "source": self.coordinator.bluetooth_path_source,
+            "adapter_choice": self.coordinator.adapter_choice,
+            "fallback": self.coordinator.adapter_fallback,
+        }

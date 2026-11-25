@@ -16,5 +16,21 @@
     "abort": {
       "already_configured": "This device is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Bluetooth adapter",
+        "description": "The Watchdog keeps a Bluetooth connection open all the time, so it uses a connection slot on whichever adapter or proxy it connects through. Home Assistant picks that by signal strength, which can put too many held connections on one adapter. Choose one here to spread them out yourself. The Bluetooth Path sensor shows the one in use.",
+        "data": {
+          "adapter": "Connect through",
+          "adapter_fallback": "Use another adapter if this one is unavailable"
+        },
+        "data_description": {
+          "adapter": "Automatic lets Home Assistant choose. Adapters and proxies that hear the Watchdog right now are listed first, strongest first.",
+          "adapter_fallback": "Only used when the chosen adapter hasn't heard the Watchdog recently or has no free slot."
+        }
+      }
+    }
   }
 }

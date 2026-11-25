@@ -19,6 +19,7 @@
 - discovery identifies likely Hughes devices by name/service patterns
 - config flow stores address, detected generation, and device name
 - setup conditionally loads Gen2-only platforms when generation is Gen2
+- options flow: Bluetooth adapter choice (`adapter`: `automatic` or a scanner source; `adapter_fallback`, default on). Connects go through `ha_ble_pinning.establish_connection_via` (via the `pinning.py` compatibility module): Automatic = Home Assistant's routing; otherwise pinned to that adapter/proxy, with the other scanners that hear the device as a fallback tier when allowed. Changing options reloads the entry.
 
 ## 4. Runtime Lifecycle
 
@@ -125,7 +126,8 @@ Timing constants:
 - connection and data-health binary sensors
 - line error code plus mapped diagnostic text
 - generation/device metadata diagnostics
-- integration diagnostics export for coordinator/parser state
+- integration diagnostics export for coordinator/parser state (includes the Bluetooth adapter choice and path)
+- Bluetooth Path diagnostic sensor: scanner name of the link in use (habluetooth's connected scanner)
 
 ## 10. Security and Safety Notes
 
@@ -143,6 +145,7 @@ Recent trajectory includes:
 - HACS/CI/repository hardening
 - **v1.0.3:** cumulative `Total Power` and `Total Energy` sensors for dual-line (50amp) units via new `HughesCumulativeSensor` entity class
 - **v1.0.4:** HACS default store publication prep — brand `icon.png` added at `custom_components/ha_hughes/brand/`, `manifest.json` keys sorted to `domain`/`name`/alphabetical per Hassfest requirements, removed invalid `domains` key from `hacs.json`
+- **v1.1.0:** user-selectable Bluetooth adapter/proxy (ha-ble-pinning >= 0.2.1) and Bluetooth Path sensor; minimum Home Assistant 2025.2 (the library needs Python 3.13)
 
 ## 12. Known Constraints
 

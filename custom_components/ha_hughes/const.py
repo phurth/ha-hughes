@@ -161,3 +161,8 @@ RECONNECT_BACKOFF_BASE = 5.0
 RECONNECT_BACKOFF_CAP = 120.0
 STALE_TIMEOUT = 300.0          # 5 min without data → force reconnect
 WATCHDOG_INTERVAL = 60.0       # health-check interval
+
+# Options: which Bluetooth adapter or proxy to connect through (ha-ble-pinning).
+# "automatic" leaves the choice to Home Assistant.
+CONF_ADAPTER = "adapter"
+CONF_ADAPTER_FALLBACK = "adapter_fallback"

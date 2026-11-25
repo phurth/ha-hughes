@@ -39,7 +39,6 @@ import time
 from typing import Any
 
 from bleak import BleakClient, BleakError, BleakGATTCharacteristic
-from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
@@ -48,6 +47,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
+    CONF_ADAPTER,
+    CONF_ADAPTER_FALLBACK,
     CONF_DEVICE_NAME,
     CONF_GENERATION,
     DOMAIN,
@@ -71,6 +72,7 @@ from .const import (
     WATCHDOG_INTERVAL,
 )
 from .models import HughesLineData, HughesState
+from .pinning import AUTOMATIC, connection_path, establish_connection_via
 from .protocol.gen1 import Gen1FrameAssembler
 from .protocol.gen2 import Gen2CommandBuilder, Gen2PacketFramer, parse_dl_report
 
@@ -105,6 +107,11 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
 
         # BLE client
         self._client: BleakClient | None = None
+        # Bluetooth adapter choice (options) and the path actually in use.
+        self.adapter_choice: str = entry.options.get(CONF_ADAPTER, AUTOMATIC)
+        self.adapter_fallback: bool = entry.options.get(CONF_ADAPTER_FALLBACK, True)
+        self.bluetooth_path: str | None = None
+        self.bluetooth_path_source: str | None = None
         self._connected = False
         self._write_char_uuid: str | None = None
 
@@ -212,10 +219,14 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
             return
 
         try:
-            client = await establish_connection(
-                BleakClient,
+            client = await establish_connection_via(
                 device,
                 self._address,
+                adapter=self.adapter_choice,
+                allow_fallback=self.adapter_fallback,
+                scanner_devices=bluetooth.async_scanner_devices_by_address(
+                    self.hass, self._address, connectable=True
+                ),
                 disconnected_callback=self._on_disconnect,
             )
         except (BleakError, TimeoutError, OSError) as exc:
@@ -226,6 +237,7 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         self._client = client
         self._connected = True
         self._reconnect_failures = 0
+        self._note_bluetooth_path(client)
         _LOGGER.info("Connected to Hughes %s", self._address)
 
         await asyncio.sleep(SERVICE_DISCOVERY_DELAY)
@@ -394,10 +406,20 @@ class HughesCoordinator(DataUpdateCoordinator[HughesState | None]):
         except Exception:  # noqa: BLE001
             pass
 
+    def _note_bluetooth_path(self, client: BleakClient) -> None:
+        """Record which adapter or proxy the link actually uses."""
+        source = connection_path(client).source
+        scanner = bluetooth.async_scanner_by_source(self.hass, source) if source else None
+        self.bluetooth_path_source = source
+        self.bluetooth_path = (scanner.name if scanner else None) or source
+        _LOGGER.debug("Hughes %s connected through %s", self._address, self.bluetooth_path)
+
     @callback
     def _on_disconnect(self, client: BleakClient) -> None:
         """Handle unexpected BLE disconnection."""
         _LOGGER.warning("Hughes %s disconnected", self._address)
+        self.bluetooth_path = None
+        self.bluetooth_path_source = None
         self._stop_watchdog()
         self._connected = False
         self._client = None
